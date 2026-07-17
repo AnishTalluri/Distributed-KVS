@@ -1,0 +1,31 @@
+method PUT /data/<key>:
+    data = parsed JSON body
+
+    if not data or no value in data:
+        return 400
+
+    if key not in main dict:
+        dict[key] = value
+        return 201
+    
+    else:
+        dict[key] = value
+        return 200
+
+method GET /data/<key>:
+    if key not in main dict:
+        return 404
+
+    else:
+        return 200 + dict[key]
+
+method GET /data:
+    return 200 + list of main dict keys
+
+method DELETE /data/<key>:
+    if key exists in main dict:
+        delete key
+        return 200
+
+    else:
+        return 404
