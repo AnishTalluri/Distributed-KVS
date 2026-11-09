@@ -30,6 +30,24 @@ check_status() {
     fi
 }
 
+# check_body <expected_body> <description> <curl_args...>
+check_body() {
+    local expected=$1
+    local desc=$2
+    shift 2
+
+    local actual
+    actual=$(curl -s "$@")
+
+    if [ "$actual" = "$expected" ]; then
+        echo -e "${GREEN}PASS${NC}  [body]  $desc"
+        PASS=$((PASS + 1))
+    else
+        echo -e "${RED}FAIL${NC}  [expected $expected, got $actual]  $desc"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo -e "${BLUE}Running Part 1 tests against $BASE_URL${NC}\n"
 
 # 1. GET on empty store -> 200
@@ -41,6 +59,10 @@ check_status 201 "PUT /data/foo (new key)" \
     -X PUT "$BASE_URL/data/foo" \
     -H "Content-Type: application/json" \
     -d '{"value": "bar"}'
+
+# 2b. GET /data returns key-value pairs, not a key list
+check_body '{"foo":"bar"}' "GET /data body shape" \
+    "$BASE_URL/data"
 
 # 3. GET the key back -> 200
 check_status 200 "GET /data/foo (existing key)" \
@@ -61,6 +83,18 @@ check_status 400 "PUT /data/foo (missing value field)" \
     -X PUT "$BASE_URL/data/foo" \
     -H "Content-Type: application/json" \
     -d '{}'
+
+# 6b. Body is valid JSON but not an object -> 400
+check_status 400 "PUT /data/foo (body is a number)" \
+    -X PUT "$BASE_URL/data/foo" \
+    -H "Content-Type: application/json" \
+    -d '5'
+
+# 6c. Value is not a string -> 400
+check_status 400 "PUT /data/foo (value is not a string)" \
+    -X PUT "$BASE_URL/data/foo" \
+    -H "Content-Type: application/json" \
+    -d '{"value": 5}'
 
 # 7. DELETE existing key -> 200
 check_status 200 "DELETE /data/foo" \

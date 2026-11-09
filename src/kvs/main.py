@@ -5,15 +5,15 @@ app = FastAPI() # Initialize FastAPI application
 
 store: dict = {} # In-memory key-value store
 
-# This EMPTY object is being declared so that NULL is an actual value
+# Unique object to tell between missing keys and NULL values
 # (i.e. if a DELETE request is made and the key holds NULL,
 # it should be able to delete the value and return 200, only 404 if the key is missing)
 _MISSING = object()
 
-# GET that returns list of keys with 200 code
+# GET that returns key-value pairs with 200 code
 @app.get("/data")
 def list_keys():
-    return {"keys": list(store.keys())}
+    return dict(store)
 
 
 # GET that returns value for a key with 200 code,
@@ -48,6 +48,10 @@ async def create_or_update_key(key: str, request: Request):
     # Check that the request body contains a 'value' field
     if "value" not in body:
         raise HTTPException(status_code=400, detail="No 'value' field in request body")
+
+    # Check that the 'value' is a string
+    if not isinstance(body["value"], str):
+        raise HTTPException(status_code=400, detail="'value' must be a string")
 
     # Check if the key already exists in the store
     if key not in store:
