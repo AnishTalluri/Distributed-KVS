@@ -49,6 +49,8 @@ Don't say:
 - `store = {}` lives in the memory of one Python process.
 - Process stops (container restart) = dict gone. No persistence.
 - Dict operations are O(1) on average (it's a hash table).
+- Values must be strings (per spec). Keys are strings from the URL.
+- `GET /data` returns a snapshot copy (`dict(store)`) of every key with its value, like `{"x": "1"}`.
 - Alternatives: SQLite, writing to a file, Redis. All add persistence, none needed for Part 1. Redis would defeat the point of building a KVS.
 
 **Q&A**
@@ -59,7 +61,9 @@ Don't say:
 - **Q: Why not use a database?**
   A: Part 1 is about the API contract. A database adds setup and nothing the spec needs yet.
 - **Q: Time complexity of reads and writes?**
-  A: O(1) average, because a dict is a hash table.
+  A: O(1) average, because a dict is a hash table. `GET /data` is O(n), since it copies every key.
+- **Q: Why does `GET /data` return a copy instead of the dict itself?**
+  A: FastAPI serializes the response a moment later. If a DELETE on another thread changes the dict mid-serialization, Python can crash. The copy is taken in one step, so the response is built from a stable snapshot.
 
 ---
 
@@ -70,7 +74,7 @@ Don't say:
 **Key points**
 - 200 OK (read, update, delete), 201 created (new key), 400 bad request, 404 key not found.
 - 400 = "your request is broken." 404 = "your request is fine, the key doesn't exist."
-- Three different 400s in PUT: couldn't parse the JSON, JSON isn't an object, no `value` field.
+- Four different 400s in PUT: couldn't parse the JSON, JSON isn't an object, no `value` field, value isn't a string.
 - Errors use `raise HTTPException`. Success uses `return`. Exceptions are for abnormal flow, returns for normal flow.
 - Bare `return` gives 200 by default. `JSONResponse(status_code=201)` is used when the code isn't 200.
 
@@ -83,6 +87,10 @@ Don't say:
   A: It stops the handler right there, FastAPI formats every error the same way, and it works from inside helper functions.
 - **Q: What happens if a client PUTs a body of `5`?**
   A: 400 with "Request body must be a JSON object." It used to crash with a 500 until I added an `isinstance(body, dict)` check.
+- **Q: What about `{"value": 5}`?**
+  A: 400, because the spec says values are strings. I check `isinstance(body["value"], str)`.
+- **Q: How did you find these gaps?**
+  A: I re-read the spec against my code. My tests only checked status codes, so I added body-shape and validation tests that failed first, then fixed the code until they passed.
 - **Q: Would you ever avoid 404 for a missing key?**
   A: If key names are sensitive, like user IDs, 404 vs 200 leaks which ones exist. Not a concern for this project.
 
@@ -122,15 +130,16 @@ Don't say:
 - Check then act with a gap = race condition.
 - Old code: `if key not in store` then `del store[key]`. Two threads could both pass the check, and the second `del` crashed with a 500.
 - Fix: `store.pop(key, _MISSING)`. Check and delete happen in one step.
-- `_MISSING = object()` is a unique marker no client can send. It separates "key missing" from "value is null."
-- Compare with `is _MISSING`. Never `if not removed`, because null, 0, and "" are real stored values.
+- `_MISSING = object()` is a unique marker no client can send. It separates "key missing" from any stored value.
+- Compare with `is _MISSING`. Never `if not removed`, because a stored value can look empty (like `""`).
+- Same race family: `GET /data` returns `dict(store)`, a one-step snapshot, so a concurrent DELETE can't break the response.
 - Three fix options: all handlers async (one thread), a one-step operation (removes the gap), a lock (guards the gap). I chose the one-step operation.
 
 **Q&A**
 - **Q: Why is the new DELETE safe when the old one wasn't?**
   A: The check and the delete are one step, so there's no gap for another thread to slip into.
 - **Q: Why not `if not removed`?**
-  A: A key storing null or 0 would look missing and wrongly return 404.
+  A: A stored empty string `""` would look missing and wrongly return 404. `is _MISSING` only matches the one marker object.
 - **Q: When would you use a lock instead?**
   A: When the critical section has multiple steps and no single operation covers it. That comes back in Part 2.
 - **Q: Does a lock help across nodes?**
@@ -148,6 +157,8 @@ Don't say:
 - Each container has its own network, which is how Part 2 simulates separate nodes.
 - `--host 0.0.0.0` = listen on all network interfaces. With `127.0.0.1`, traffic from outside the container can't reach uvicorn.
 - Copy `requirements.txt` and install before copying the source code. Docker caches each step, so code edits don't rerun the slow install.
+- The Dockerfile lives at the repo root (per spec), so `docker build -t kvs-pt1 .` works with no `-f` flag.
+- The image is a snapshot of the code at build time. No `--reload`, so rebuild after every change.
 
 **Q&A**
 - **Q: Why containerize at all?**
@@ -156,6 +167,8 @@ Don't say:
   A: The container starts fine, but every request from the host gets "connection refused."
 - **Q: Why copy requirements before the source code?**
   A: Docker reruns every step after the first changed one. Dependencies rarely change, so the install stays cached.
+- **Q: Where is the Dockerfile, and why there?**
+  A: Repo root. The spec's graders run `docker build` from the root, and Docker looks for `Dockerfile` there by default.
 - **Q: Is a container a VM?**
   A: No. It shares the host's kernel. A VM runs a whole separate OS.
 
